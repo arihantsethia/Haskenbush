@@ -4,66 +4,98 @@ import Data.List
 import Data.Maybe
 import Prelude
 import System.IO
+import System.Random
 
-type Board = [Bush]
-type Heap = Integer
 type Turn = (Integer, Integer)
+type Board = [Bush BranchObject]
+data Color = Red | Green | Blue deriving (Read, Show, Enum, Eq, Ord)
+data Bush a = Empty | Leaf a | Branch a [Bush a] deriving Show
 
+players :: [String]
 players = []
 
-main = do putStrLn " Enter 1 for Single Player and 2 for multiplayer."
-          option <- readLn
-          gameBoard = GenerateRandomBoard 0
-          --gameBoard = []
-          --DisplayGame gameBoard 0
-          if option == 1 then
-              putStrLn "Name of Player 1 :"
-              player1 <- readLn
-              putStrLn "Name of Player 2 :"
-              player2 <- readLn
-              players ++ player1 ++ player2
-              HackenBushAI gameBoard
-          else
-              putStrLn "Name of Player 1 :"
-              player1 <- readLn
-              player2 = "Computer"
-              players ++ player1 ++ player2
-              HackenBush gameBoard
+main :: IO ()
+main = do 
+    inputOption <- promptLine "Enter 1 for Single Player and 2 for multiplayer."
+    option <- getInteger inputOption
+    players <- getInput option
+    numberOfBushes <- randomRIO (1, 15)
+    let board = generateRandomBoard1 0
+    let x = startGame board option
+    print 5
 
-GenerateRandomBoard :: Integer -> Board
-GenerateRandomBoard 0 = []
+getInput :: (Eq a, Num a) => a -> IO [String]
+getInput option
+    | option == 1 = do
+          player1 <- promptLine "Name of Player 1 :"
+          let player2 = "Jarvis"
+          let playerNames = [player1, player2]
+          return playerNames
+    | option == 2 = do 
+          player1 <- promptLine "Name of Player 1 :"
+          player2 <- promptLine "Name of Player 2 :"
+          let playerNames = [player1, player2]
+          return playerNames
+    | otherwise = error "Not a valid option"
 
-HackenBush :: Board -> IO Board
-HackenBush [] = return []
-HackenBush xs = do
-                  board <- play 1 xs
-                  DisplayGame board 1
-                  newBoard <- play 2 board
-                  DisplayGame newBoard 2
-                  HackenBush newBoard
+startGame :: (Eq a, Num a) => Board -> a -> IO Board
+startGame board option
+    | option == 1 =  hackenBush board 1
+    | option == 2 =  hackenBush board 1
+    | otherwise = error "Not a valid option"
 
-play :: Integer -> Integer -> Board -> IO Board
-play player xs = do 
-                   putStrLn " "
-                   putStrLn "Player" ++ player ++ ": Enter The Row From Which You Would Like To Take"
-                   bushNumber <- readLn
-                   putStrLn " "
-                   putStrLn "Player" ++ player ++ ":Enter The Amount You Would Like To Take"
-                   branch <- readLn
-                   putStrLn " "
-                   putStrLn "HackenBush Game Status: "
-                   putStrLn " "
-                   --return $ update_game xs bushNumber branch
+hackenBush :: Board -> Int -> IO Board
+hackenBush [] _= return []
+hackenBush board player = do
+    newBoard <- play board player
+    hackenBush newBoard (mod player 2 + 1)
 
-DisplayGame :: Board -> Int -> IO ()
-DisplayGame [] _ = return()
+hackenBushAI :: Board -> Int -> IO Board
+hackenBushAI [] _= return []
+hackenBushAI board player
+    | player == 1 = do
+          newBoard <- play board player
+          hackenBushAI newBoard 2
+    | player == 2 = do 
+          newBoard <- playAI board
+          hackenBushAI newBoard 1
 
---update the game state --
---Current game state -> user options (row and how many to take) -> new state --
-update_game :: [Int] -> Int -> Int -> [Int]
-update_game [] _ _ = []
-update_game [0,0,0] _ _ = []
-update_game (x:xs) row take_amnt | sum(x:xs) == 0 = []
-                                | row == 1 = x - take_amnt:xs
-                                 | row == 2 = x : head(xs) - take_amnt : tail(xs)
-                                 | row == 3 = x : head(xs) : [last(xs) - take_amnt]
+play :: Board -> Int -> IO Board
+play board player  = do
+    let playerName = players!!player
+    bushNumber <- promptLine $ playerName ++ " : Enter The Row From Which You Would Like To Take :"
+    print bushNumber
+    branch <- promptLine $ playerName ++ " : Enter The Branch You Would Like To Take :"
+    print branch
+    return board
+
+playAI board = do
+    return board
+
+--generateRandomNumber :: Integer -> Integer -> Integer
+generateRandomNumber st en = do
+    randomNumberIO <- randomRIO (st, en)
+    --randomNumber <- getInteger randomNumberIO
+    return randomNumberIO
+
+generateRandomBush g 0 = [Empty]
+generateRandomBush g h = do
+    let numberOfSubBushes = generateRandomNumber 0 5
+    if numberOfSubBushes == 0 then return [Empty]
+    else return [(generateRandomBush x (h-1))| x <- [1..numberOfSubBushes]] 
+
+generateRandomBoard1 0 = [Empty]
+--generateRandomBoard :: Integer -> Board
+generateRandomBoard g 0 = []
+generateRandomBoard g d = do
+    let height = generateRandomNumber 1 6
+    return [generateRandomBush g height| x <- [1..d]] 
+
+getInteger string = do
+    let integer = read string :: Integer
+    return integer
+
+promptLine :: String -> IO String
+promptLine prompt = do
+    putStr prompt
+    getLine
