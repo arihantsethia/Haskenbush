@@ -718,6 +718,8 @@ Sparsh Kumar Sinha</property>
   <widget class="GtkDialog" id="difficultyDialog">
     <property name="can_focus">False</property>
     <property name="border_width">5</property>
+    <property name="type">popup</property>
+    <property name="window_position">center</property>
     <property name="type_hint">dialog</property>
     <child internal-child="vbox">
       <widget class="GtkVBox" id="dialog-vbox2">
@@ -771,6 +773,7 @@ Sparsh Kumar Sinha</property>
               <widget class="GtkComboBox" id="cbDifficulty">
                 <property name="visible">True</property>
                 <property name="can_focus">False</property>
+                <property name="active">1</property>
                 <property name="items" translatable="yes" context="yes">Easy
 Medium
 Difficult</property>
@@ -911,12 +914,8 @@ Difficult</property>
     <property name="can_focus">False</property>
     <property name="border_width">5</property>
     <property name="type">popup</property>
-    <property name="resizable">False</property>
-    <property name="modal">True</property>
     <property name="window_position">center</property>
-    <property name="destroy_with_parent">True</property>
     <property name="type_hint">dialog</property>
-    <property name="urgency_hint">True</property>
     <property name="has_separator">True</property>
     <child internal-child="vbox">
       <widget class="GtkVBox" id="dialog-vbox1">
@@ -1024,6 +1023,7 @@ Difficult</property>
     <property name="type">popup</property>
     <property name="window_position">center</property>
     <property name="type_hint">dialog</property>
+    <property name="has_separator">True</property>
     <child internal-child="vbox">
       <widget class="GtkVBox" id="dialog-vbox4">
         <property name="visible">True</property>

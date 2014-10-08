@@ -3,9 +3,8 @@ import Data.IORef
 import Data.Maybe
 import Graphics.UI.Gtk
 import Graphics.UI.Gtk.Glade
-import Graphics.Rendering.Cairo 
+import Graphics.Rendering.Cairo
 import Graphics.UI.Gtk.Gdk.Events
-import System.IO
 import System.Random
 
 type HM = M.Map (Integer,Integer) Integer
@@ -22,8 +21,12 @@ data GUI = GUI {
     disableBoard :: IO (),
     enableBoard :: IO (),
     resetBoard :: IO (),
-    updateGameDefaults :: Int -> IO (),
-    getPlayerNames :: GameType -> IO (),
+    showPlayDialog :: IO (),
+    getRadioButtonValue :: Int -> IO Bool,
+    showPlayerDialog :: GameType -> IO (),
+    getPlayerNames :: GameType -> IO [String],
+    showDifficultyDialog :: IO (),
+    getDifficulty :: IO Int,
     hideDialog :: Int -> IO (),
     setStatus :: String -> IO ()
 }
@@ -53,42 +56,37 @@ main = do
     gameBoard <- xmlGetWidget xml castToDrawingArea "gameBoard"
     statusBar <- xmlGetWidget xml castToStatusbar "gameStatus"
     buttons <- mapM (xmlGetWidget xml castToButton) ["bPlayOk", "bPlayerOk", "bDiffOk"]
+    radioButtons <- mapM (xmlGetWidget xml castToRadioButton) ["rbSingle", "rbMultiple"]
     dialogs <- mapM (xmlGetWidget xml castToDialog) ["playDialog", "playerDialog", "difficultyDialog"]
     playerNameEntry <- mapM (xmlGetWidget xml castToEntry) ["player1Entry","player2Entry"]
     aboutDialog <- xmlGetWidget xml castToAboutDialog "aboutDialog"
     cBox <- xmlGetWidget xml castToComboBox "cbDifficulty"
     ctx <- statusbarGetContextId statusBar "state"
 
-    gui <- guiActions buttons dialogs cBox playerNameEntry gameBoard statusBar ctx
+    gui <- guiActions buttons radioButtons dialogs cBox playerNameEntry gameBoard statusBar ctx
 
     widgetModifyBg gameBoard StateNormal (Color 65535 65535 65535)
 
     widgetShowAll window
 
-    newGameState <- reset gui GameState { board = [Empty], playerNames = [], activePlayer = 0, mp = M.empty :: HM, gameType = Multiple }
-    state <- newIORef newGameState
+    state <- newIORef GameState { board = [Empty], playerNames = ["Player 1", "Player 2"], activePlayer = 0, mp = M.empty :: HM, gameType = Multiple }
     let modifyState f = readIORef state >>= f >>= writeIORef state
-
+    reset gui
     onActivateLeaf quit mainQuit
-    onActivateLeaf newgame $ modifyState $ reset gui
+    onActivateLeaf newgame (reset gui)
     onActivateLeaf help (widgetShow aboutDialog)
 
     onButtonPress (buttons!!0) (\e -> do
-                                    print e
                                     modifyState $ updateGameType gui
-                                    updateGameDefaults gui 1
                                     return True
                                     )
 
     onButtonPress (buttons!!1) (\e -> do
-                                    print e
                                     modifyState $ updatePlayerNames gui
-                                    updateGameDefaults gui 2
                                     return True
                                     )
 
     onButtonPress (buttons!!2) (\e -> do
-                                    print e
                                     modifyState $ updateDifficulty gui
                                     return True
                                     )
@@ -103,11 +101,11 @@ main = do
     onExpose gameBoard (\x -> do
                                 modifyState $ drawCanvas gameBoard
                                 return True
-                    )
+                                )
 
     mainGUI
 
-guiActions buttons dialogs cBox playerNameEntry gameBoard statusBar ctx =
+guiActions buttons radioButtons dialogs cBox playerNameEntry gameBoard statusBar ctx =
     do return $ GUI {disableBoard = flip widgetSetSensitivity False gameBoard,
                      enableBoard = flip widgetSetSensitivity True gameBoard,
                      resetBoard = do
@@ -118,55 +116,68 @@ guiActions buttons dialogs cBox playerNameEntry gameBoard statusBar ctx =
                      drawWindow = do
                         drawWin <- widgetGetDrawWindow gameBoard
                         return drawWin,
-                     updateGameDefaults = \i -> do 
-                        widgetShow (dialogs!!i),
+                     showPlayDialog = widgetShow (dialogs!!0),
+                     showDifficultyDialog = do
+                                comboBoxSetActive cBox 0
+                                widgetShow (dialogs!!2),
+                     showPlayerDialog = \gameType -> do
+                                entrySetText (playerNameEntry!!1) "Player 1"
+                                if gameType == Single 
+                                    then do
+                                        entrySetText (playerNameEntry!!1) "Jarvis"
+                                        set (playerNameEntry!!1) [entryEditable := False]
+                                    else do
+                                        entrySetText (playerNameEntry!!1) "Player 2"
+                                        set (playerNameEntry!!1) [entryEditable := False]
+                                widgetShow (dialogs!!1),
                      hideDialog = \i -> do
                         widgetHide (dialogs!!i),
-                     getPlayerNames = \gameType -> do
-                                 if gameType == Single then do 
-                                    widgetShow (dialogs!!1)
-                                 else widgetShow (dialogs!!1),
+                     getDifficulty = comboBoxGetActive cBox,
+                     getPlayerNames = \gameType -> mapM (entryGetText) playerNameEntry,
+                     getRadioButtonValue = \i ->  (toggleButtonGetActive (radioButtons!!i)),
                      setStatus = \msg -> do
                                  statusbarPop statusBar ctx
                                  statusbarPush statusBar ctx msg
                                  return ()}
 
-reset :: GUI -> GameState -> IO GameState
-reset gui (GameState board playerNames activePlayer mp gameType) = do
+reset :: GUI -> IO ()
+reset gui = do
     resetBoard gui
+    setStatus gui ""
     disableBoard gui
-    updateGameDefaults gui 0
-    enableBoard gui
-    let difficulty = 2
+    showPlayDialog gui
+
+updateGameType :: GUI -> GameState -> IO GameState
+updateGameType gui st@(GameState board playerNames activePlayer mp gameType) = do
+    isSingle <- getRadioButtonValue gui 0
+    hideDialog gui 0
+    let newGameType = if isSingle then Single else Multiple
+    showPlayerDialog gui newGameType
+    return (GameState board playerNames activePlayer mp newGameType)
+
+updatePlayerNames :: GUI -> GameState -> IO GameState
+updatePlayerNames gui st@(GameState board playerNames activePlayer mp gameType) = do
+    newPlayerNames <- getPlayerNames gui Single
+    hideDialog gui 1
+    showDifficultyDialog gui
+    return (GameState board newPlayerNames activePlayer mp gameType)
+
+updateDifficulty :: GUI -> GameState -> IO GameState
+updateDifficulty gui st@(GameState board playerNames activePlayer mp gameType) = do
     g <- newStdGen
+    selected <- getDifficulty gui
+    hideDialog gui 2
+    let difficulty = 1 + toInteger selected
     let randTuple = randomNumber g 2 (3*difficulty)
     let numberOfBushes = fst randTuple
     let g' = snd randTuple
     let newBoard = randomBoard numberOfBushes difficulty 0 g'
     drawingBoard <- drawWindow gui
     drawWindowClearAreaExpose drawingBoard 0 0 (truncate boardWidth) (truncate boardHeight)
-    let s = " : make your move." :: String
-    if length playerNames /= 0
-        then setStatus gui $ playerNames!!0 ++ s
-        else setStatus gui $ s
-    return (GameState newBoard playerNames 0 mp gameType)
-
-updateGameType gui st@(GameState board playerName activePlayer mp gameType) = do
-    print "here"
-    hideDialog gui 0
-    let newGameType = Single
-    return (GameState board playerName activePlayer mp newGameType)
-
-updatePlayerNames gui st@(GameState board playerName activePlayer mp gameType) = do
-    print "here2"
-    let newPlayerName = ["asd","ad"]
-    hideDialog gui 1
-    return (GameState board newPlayerName activePlayer mp gameType)
-
-updateDifficulty gui st@(GameState board playerName activePlayer mp gameType) = do
-    print "here3"
-    hideDialog gui 2
-    return (GameState board playerName activePlayer mp gameType)
+    let s = " : Cut a " ++ show (getColor activePlayer)++ " / Green branch." :: String
+    setStatus gui $ playerNames!!0 ++ s
+    enableBoard gui
+    return (GameState newBoard playerNames activePlayer mp gameType)
 
 removeBranch :: GUI -> Integer -> Integer -> GameState -> IO GameState
 removeBranch gui x y st@(GameState board playerName activePlayer mp gameType)= do
@@ -183,7 +194,7 @@ removeBranch gui x y st@(GameState board playerName activePlayer mp gameType)= d
                                         setStatus gui $ playerName!!(mod (nextPlayer+1) 2) ++ s
                                         disableBoard gui
                                         return (GameState newBoard playerName nextPlayer mp gameType)
-                                else do let s = " : make your move." :: String
+                                else do let s = " : Cut a " ++ show (getColor nextPlayer)++ " / Green branch." :: String
                                         setStatus gui $ playerName!!nextPlayer ++ s
                                         if gameType == Single then do
                                             let id = optimalplay (getColor nextPlayer) newBoard
@@ -195,7 +206,8 @@ removeBranch gui x y st@(GameState board playerName activePlayer mp gameType)= d
                                                         setStatus gui $ playerName!!nextPlayer ++ s'
                                                         disableBoard gui
                                                 else do
-                                                    setStatus gui $ playerName!!activePlayer ++ s
+                                                    let s' = " : Cut a " ++ show (getColor activePlayer)++ " / Green branch." :: String
+                                                    setStatus gui $ playerName!!activePlayer ++ s'
                                             return (GameState newBoard' playerName activePlayer mp gameType)
                                         else do
                                             return (GameState newBoard playerName nextPlayer mp gameType)
@@ -213,15 +225,15 @@ wins board color
 
 getId :: HM -> Integer -> Integer -> Integer
 getId mp x y
-    |  member (x,y) mp = fromJust $ M.lookup (x,y) mp
-    |  member (x,y+1) mp = fromJust $ M.lookup (x,y+1) mp
-    |  member (x,y-1) mp = fromJust $ M.lookup (x,y-1) mp
-    |  member (x+1,y) mp = fromJust $ M.lookup (x+1,y) mp
-    |  member (x+1,y+1) mp = fromJust $ M.lookup (x+1,y+1) mp
-    |  member (x+1,y-1) mp = fromJust $  M.lookup (x+1,y-1) mp
-    |  member (x-1,y) mp = fromJust $ M.lookup (x-1,y) mp
-    |  member (x-1,y+1) mp = fromJust $ M.lookup (x-1,y+1) mp
-    |  member (x-1,y-1) mp = fromJust $ M.lookup (x-1,y-1) mp
+    | member (x,y) mp = fromJust $ M.lookup (x,y) mp
+    | member (x,y+1) mp = fromJust $ M.lookup (x,y+1) mp
+    | member (x,y-1) mp = fromJust $ M.lookup (x,y-1) mp
+    | member (x+1,y) mp = fromJust $ M.lookup (x+1,y) mp
+    | member (x+1,y+1) mp = fromJust $ M.lookup (x+1,y+1) mp
+    | member (x+1,y-1) mp = fromJust $  M.lookup (x+1,y-1) mp
+    | member (x-1,y) mp = fromJust $ M.lookup (x-1,y) mp
+    | member (x-1,y+1) mp = fromJust $ M.lookup (x-1,y+1) mp
+    | member (x-1,y-1) mp = fromJust $ M.lookup (x-1,y-1) mp
     | otherwise = -1
 
 getColor :: (Num a, Eq a) => a -> BranchColor
@@ -295,6 +307,7 @@ drawBranch branch mp canvas startPointX startPointY endPointX endPointY= do
     let mp' = updateMapMultiple 7 startPointX startPointY endPointX endPointY id mp
     return mp'
 
+drawBottomLine :: DrawingArea -> IO ()
 drawBottomLine canvas = do
     drawWin <- widgetGetDrawWindow canvas
     renderWithDrawable drawWin $ do
@@ -351,47 +364,6 @@ getRadians :: Double -> Double
 getRadians degrees = radians where
     radians = (degrees * pi) / 180
 
-{-
-newGame gui mp= do
-    let difficulty = 2
-    let players = 2
-    g <- newStdGen
-    let randTuple = randomNumber g 2 (3*difficulty)
-    let numberOfBushes = fst randTuple
-    let g' = snd randTuple
-    let board = randomBoard g' numberOfBushes difficulty 0
-    displayBoard gui board mp 0
-
-getInput :: (Eq a, Num a) => a -> IO [String]
-getInput option
-    | option == 1 = do
-          player1 <- promptLine "Name of Player 1 :"
-          let player2 = "Jarvis"
-          return [player1, player2]
-    | option == 2 = do 
-          player1 <- promptLine "Name of Player 1 : "
-          player2 <- promptLine "Name of Player 2 : "
-          return [player1, player2]
-    | otherwise = error "Not a valid option"
-
-startGame :: (Eq a, Num a) => Board -> a -> IO Board
-startGame board option
-    | option == 1 =  hackenBush board 1
-    | option == 2 =  hackenBush board 1
-    | otherwise = error "Not a valid option"
-
-hackenBush [] _= return []
-hackenBush board player = hackenBush newBoard (mod player 2 + 1) where newBoard = play board player
-
-play board player = 
-    let playerName = players!!player
-        bushNumber = promptLine $ playerName ++ " : Enter The Row From Which You Would Like To Take :"
-        branch = promptLine $ playerName ++ " : Enter The Branch You Would Like To Take :"
-    in board
-
-playAI board = board
--}
-
 randomColor :: RandomGen g => g -> (BranchColor, g)
 randomColor g = case randomR (0,2) g of (r, g') -> (toEnum r, g')
 
@@ -431,32 +403,6 @@ randomBoard numberOfBushes level count g
                       len = (findMaxId bush) + 1
                       g'' = snd bushTuple
                   in bush : randomBoard (numberOfBushes-1) level (count+len) g''
-
-findFirstIdBushList turn []=(-1)
-findFirstIdBushList turn (bush:bushrest)=if(findFirstIdBush  turn bush/=(-1))then findFirstIdBush turn bush else  findFirstIdBushList turn bushrest
-findFirstIdBush turn Empty=(-1)
-findFirstIdBush turn (Branch b bushes)=if(snd b==turn || snd b==Green)then fst b else findFirstIdBushList turn bushes
-find_first_id turn []= (-1)
-find_first_id turn (bush:bushrest)=if(findFirstIdBush turn bush /= (-1))then findFirstIdBush turn bush else find_first_id turn bushrest
-extractIdBushes _ []=[]
-extractIdBushes turn (bush:bushrest)=(extract_id_bush turn bush++extractIdBushes turn bushrest) 
-extract_id_bush turn Empty=[]
-extract_id_bush turn (Branch b bushes)=if(snd b==turn || snd b==Green)then ([fst b]++extractIdBushes turn bushes) else (extractIdBushes turn bushes)
-extractId _ []=[]
-extractId turn (bush:bushrest)=extract_id_bush turn bush++extractId turn bushrest
-isEmpty_bush Empty=True
-isEmpty_bush (Branch b bushes)=False
-isEmpty []=True
-isEmpty (bush:bushrest)=if(isEmpty_bush bush)then isEmpty bushrest else False
-
-findWinningPosition Blue [] _=(-1)
-findWinningPosition Red [] _=(-1)
-findWinningPosition Blue (x:xs) board=if(isWinningPosition Red (cutBush board x)==(-1))then x else findWinningPosition Blue xs board
-findWinningPosition Red (x:xs) board=if(isWinningPosition Blue (cutBush board x)==(-1))then x else findWinningPosition Red xs board
-
-isWinningPosition Blue board=if(isEmpty board)then (-1) else findWinningPosition Blue (extractId Blue board) board
-isWinningPosition Red board=if(isEmpty board)then (-1) else findWinningPosition Red (extractId Red board) board
-optimalplay turn board=if(isWinningPosition turn board /=(-1))then isWinningPosition turn board else find_first_id turn board
 
 flattenBushList :: Board -> [BranchObject]
 flattenBushList [] = []
@@ -503,12 +449,28 @@ cutBush (bush:bushes) id = if(findInBush bush id) /= White
                             then (removeBush bush id) : bushes
                             else bush : cutBush bushes id
 
-getInteger :: String -> IO Integer
-getInteger string = do
-    let integer = read string :: Integer
-    return integer
+findFirstIdBushList turn []=(-1)
+findFirstIdBushList turn (bush:bushrest)=if(findFirstIdBush  turn bush/=(-1))then findFirstIdBush turn bush else  findFirstIdBushList turn bushrest
+findFirstIdBush turn Empty=(-1)
+findFirstIdBush turn (Branch b bushes)=if(snd b==turn || snd b==Green)then fst b else findFirstIdBushList turn bushes
+find_first_id turn []= (-1)
+find_first_id turn (bush:bushrest)=if(findFirstIdBush turn bush /= (-1))then findFirstIdBush turn bush else find_first_id turn bushrest
+extractIdBushes _ []=[]
+extractIdBushes turn (bush:bushrest)=(extract_id_bush turn bush++extractIdBushes turn bushrest) 
+extract_id_bush turn Empty=[]
+extract_id_bush turn (Branch b bushes)=if(snd b==turn || snd b==Green)then ([fst b]++extractIdBushes turn bushes) else (extractIdBushes turn bushes)
+extractId _ []=[]
+extractId turn (bush:bushrest)=extract_id_bush turn bush++extractId turn bushrest
+isEmpty_bush Empty=True
+isEmpty_bush (Branch b bushes)=False
+isEmpty []=True
+isEmpty (bush:bushrest)=if(isEmpty_bush bush)then isEmpty bushrest else False
 
-promptLine :: String -> IO String
-promptLine prompt = do
-    putStr prompt
-    getLine
+findWinningPosition Blue [] _=(-1)
+findWinningPosition Red [] _=(-1)
+findWinningPosition Blue (x:xs) board=if(isWinningPosition Red (cutBush board x)==(-1))then x else findWinningPosition Blue xs board
+findWinningPosition Red (x:xs) board=if(isWinningPosition Blue (cutBush board x)==(-1))then x else findWinningPosition Red xs board
+
+isWinningPosition Blue board=if(isEmpty board)then (-1) else findWinningPosition Blue (extractId Blue board) board
+isWinningPosition Red board=if(isEmpty board)then (-1) else findWinningPosition Red (extractId Red board) board
+optimalplay turn board=if(isWinningPosition turn board /=(-1))then isWinningPosition turn board else find_first_id turn board
