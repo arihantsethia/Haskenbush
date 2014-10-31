@@ -14,7 +14,7 @@ data BranchColor = Red | Green | Blue | White deriving (Read, Show, Enum, Eq, Or
 data Bush a = Empty | Branch a [Bush a] deriving (Read, Show, Eq, Ord)
 data GameType = Single | Multiple deriving (Read, Show, Eq, Ord)
 
-data GameState = GameState { board :: Board, playerNames :: [String] , activePlayer :: Int, mp :: HM, gameType :: GameType }
+data GameState = GameState { board :: Board, playerNames :: [String] , activePlayer :: Int, mp :: HM, gameType :: GameType , randomGen :: Int}
 data GUI = GUI {
     getPlayBoard :: IO DrawingArea,
     drawWindow :: IO DrawWindow,
@@ -37,13 +37,15 @@ data RGB = RGB {
     b :: Double
 }
 
-branchLength = -50
-boardWidth = 950 :: Double
+branchLength = -60
+boardWidth = 1160 :: Double
 boardHeight = 600 :: Double
 
 main :: IO ()
 main = do
     initGUI
+
+    g <- newStdGen
 
     Just xml <- xmlNew "haskenbush.glade"
     window <- xmlGetWidget xml castToWindow "mWindow"
@@ -69,7 +71,7 @@ main = do
 
     widgetShowAll window
 
-    state <- newIORef GameState { board = [Empty], playerNames = ["Player 1", "Player 2"], activePlayer = 0, mp = M.empty :: HM, gameType = Multiple }
+    state <- newIORef GameState { board = [Empty], playerNames = ["Player 1", "Player 2"], activePlayer = 0, mp = M.empty :: HM, gameType = Multiple, randomGen = 0}
     let modifyState f = readIORef state >>= f >>= writeIORef state
     reset gui
     onActivateLeaf quit mainQuit
@@ -148,39 +150,39 @@ reset gui = do
     showPlayDialog gui
 
 updateGameType :: GUI -> GameState -> IO GameState
-updateGameType gui st@(GameState board playerNames activePlayer mp gameType) = do
+updateGameType gui st@(GameState board playerNames activePlayer mp gameType randomGen) = do
     isSingle <- getRadioButtonValue gui 0
     hideDialog gui 0
     let newGameType = if isSingle then Single else Multiple
     showPlayerDialog gui newGameType
-    return (GameState board playerNames activePlayer mp newGameType)
+    return (GameState board playerNames 0 mp newGameType randomGen)
 
 updatePlayerNames :: GUI -> GameState -> IO GameState
-updatePlayerNames gui st@(GameState board playerNames activePlayer mp gameType) = do
+updatePlayerNames gui st@(GameState board playerNames activePlayer mp gameType randomGen) = do
     newPlayerNames <- getPlayerNames gui Single
     hideDialog gui 1
     showDifficultyDialog gui
-    return (GameState board newPlayerNames activePlayer mp gameType)
+    return (GameState board newPlayerNames activePlayer mp gameType randomGen)
 
 updateDifficulty :: GUI -> GameState -> IO GameState
-updateDifficulty gui st@(GameState board playerNames activePlayer mp gameType) = do
+updateDifficulty gui st@(GameState board playerNames activePlayer mp gameType randomGen) = do
     g <- newStdGen
     selected <- getDifficulty gui
     hideDialog gui 2
     let difficulty = 1 + toInteger selected
-    let randTuple = randomNumber g 2 (3*difficulty)
+    let randTuple = randomNumber g (1 + difficulty) (2 + (4*difficulty + difficulty+1) `div` 3)
     let numberOfBushes = fst randTuple
     let g' = snd randTuple
     let newBoard = randomBoard numberOfBushes difficulty 0 g'
     drawingBoard <- drawWindow gui
-    drawWindowClearAreaExpose drawingBoard 0 0 (truncate boardWidth) (truncate boardHeight)
+    drawWindowClearAreaExpose drawingBoard 0 0 (truncate (boardWidth+50)) (truncate (boardHeight+50))
     let s = " : Cut a " ++ show (getColor activePlayer)++ " / Green branch." :: String
     setStatus gui $ playerNames!!0 ++ s
     enableBoard gui
-    return (GameState newBoard playerNames activePlayer mp gameType)
+    return (GameState newBoard playerNames activePlayer mp gameType randomGen)
 
 removeBranch :: GUI -> Integer -> Integer -> GameState -> IO GameState
-removeBranch gui x y st@(GameState board playerName activePlayer mp gameType)= do
+removeBranch gui x y st@(GameState board playerName activePlayer mp gameType randomGen)= do
     let id = getId mp x y
     if id /= -1 
         then do let color = findInBushList board id
@@ -188,19 +190,19 @@ removeBranch gui x y st@(GameState board playerName activePlayer mp gameType)= d
                     then do let newBoard = cutBush board id
                             let nextPlayer = mod ( activePlayer + 1 ) 2
                             drawingBoard <- drawWindow gui
-                            drawWindowClearAreaExpose drawingBoard 0 0 (truncate boardWidth) (truncate boardHeight)
+                            drawWindowClearAreaExpose drawingBoard 0 0 (truncate (boardWidth+50)) (truncate (boardHeight+50))
                             if wins newBoard $ getColor nextPlayer 
                                 then do let s = " : Wins." :: String
                                         setStatus gui $ playerName!!(mod (nextPlayer+1) 2) ++ s
                                         disableBoard gui
-                                        return (GameState newBoard playerName nextPlayer mp gameType)
+                                        return (GameState newBoard playerName nextPlayer mp gameType randomGen)
                                 else do let s = " : Cut a " ++ show (getColor nextPlayer)++ " / Green branch." :: String
                                         setStatus gui $ playerName!!nextPlayer ++ s
                                         if gameType == Single then do
-                                            let id = optimalplay (getColor nextPlayer) newBoard
+                                            let id = optimalplay (getColor nextPlayer) newBoard (randomGen+1)
                                             let newBoard' = cutBush newBoard id
                                             drawingBoard <- drawWindow gui
-                                            drawWindowClearAreaExpose drawingBoard 0 0 (truncate boardWidth) (truncate boardHeight)
+                                            drawWindowClearAreaExpose drawingBoard 0 0 (truncate (boardWidth+50)) (truncate (boardHeight+50))
                                             if wins newBoard' $ getColor activePlayer
                                                 then do let s' = " : Wins." :: String
                                                         setStatus gui $ playerName!!nextPlayer ++ s'
@@ -208,9 +210,9 @@ removeBranch gui x y st@(GameState board playerName activePlayer mp gameType)= d
                                                 else do
                                                     let s' = " : Cut a " ++ show (getColor activePlayer)++ " / Green branch." :: String
                                                     setStatus gui $ playerName!!activePlayer ++ s'
-                                            return (GameState newBoard' playerName activePlayer mp gameType)
+                                            return (GameState newBoard' playerName activePlayer mp gameType (randomGen+1))
                                         else do
-                                            return (GameState newBoard playerName nextPlayer mp gameType)
+                                            return (GameState newBoard playerName nextPlayer mp gameType randomGen)
                             
                     else do 
                         return st
@@ -250,14 +252,14 @@ isValidColor color id
     | otherwise = False
 
 drawCanvas :: DrawingArea -> GameState -> IO GameState
-drawCanvas gameBoard st@(GameState board playerName activePlayer mp gameType) = do
+drawCanvas gameBoard st@(GameState board playerName activePlayer mp gameType randomGen) = do
     let numberOfBushes = fromIntegral $ (length board)
     let divLength =  boardWidth / numberOfBushes
     let startPointX = 50 + divLength/2
     let startPointY = boardHeight - 75
     mp'<-drawBoard board mp gameBoard startPointX startPointY divLength
     drawBottomLine gameBoard
-    return (GameState board playerName activePlayer mp' gameType)
+    return (GameState board playerName activePlayer mp' gameType randomGen)
 
 drawBoard :: Board -> HM -> DrawingArea -> Double -> Double -> Double -> IO HM
 drawBoard [] mp _ _ _ _= do return mp 
@@ -395,7 +397,7 @@ randomBushList numberOfSubBushes height level count g=
 randomBoard :: (Num a, Ord a, RandomGen g) => a -> Integer -> Integer -> g -> Board
 randomBoard numberOfBushes level count g
     | numberOfBushes<=0 = []
-    | otherwise = let randTuple = randomNumber g 1 (2*level + 1)
+    | otherwise = let randTuple = randomNumber g 2 (2*level)
                       height = fst randTuple
                       g' = snd randTuple
                       bushTuple = randomBushTuple height level count g'
@@ -409,7 +411,12 @@ flattenBushList [] = []
 flattenBushList (bush:bushes) = (flattenBush bush) ++ (flattenBushList bushes)
 
 flattenBush :: Bush BranchObject -> [BranchObject]
+flattenBush Empty = []
 flattenBush (Branch a bushes)= a : (flattenBushList bushes)
+
+countNodes :: Board -> Int
+countNodes [] = 0
+countNodes board = length $ flattenBushList board
 
 findMaxIdList :: Board -> Integer
 findMaxIdList [] = 0
@@ -453,8 +460,17 @@ findFirstIdBushList turn []=(-1)
 findFirstIdBushList turn (bush:bushrest)=if(findFirstIdBush  turn bush/=(-1))then findFirstIdBush turn bush else  findFirstIdBushList turn bushrest
 findFirstIdBush turn Empty=(-1)
 findFirstIdBush turn (Branch b bushes)=if(snd b==turn || snd b==Green)then fst b else findFirstIdBushList turn bushes
-find_first_id turn []= (-1)
-find_first_id turn (bush:bushrest)=if(findFirstIdBush turn bush /= (-1))then findFirstIdBush turn bush else find_first_id turn bushrest
+
+findlistBush turn Empty=[]
+findlistBush turn (Branch b bushes)=if(snd b==turn || snd b==Green)then [fst b] ++ find_list turn bushes else find_list turn bushes
+
+find_list turn []= []
+find_list turn (bush:bushrest)=findlistBush turn bush ++ find_list turn bushrest
+
+play_random_id turn [] _= (-1)
+play_random_id turn bush randomGen = let list = find_list turn bush
+                                     in list !! fromIntegral (randomGen `mod` length list)
+
 extractIdBushes _ []=[]
 extractIdBushes turn (bush:bushrest)=(extract_id_bush turn bush++extractIdBushes turn bushrest) 
 extract_id_bush turn Empty=[]
@@ -473,4 +489,6 @@ findWinningPosition Red (x:xs) board=if(isWinningPosition Blue (cutBush board x)
 
 isWinningPosition Blue board=if(isEmpty board)then (-1) else findWinningPosition Blue (extractId Blue board) board
 isWinningPosition Red board=if(isEmpty board)then (-1) else findWinningPosition Red (extractId Red board) board
-optimalplay turn board=if(isWinningPosition turn board /=(-1))then isWinningPosition turn board else find_first_id turn board
+optimalpla turn board randomGen =if(isWinningPosition turn board /=(-1))then isWinningPosition turn board else play_random_id turn board randomGen
+
+optimalplay turn board randomGen =if(countNodes board<=20)then optimalpla turn board randomGen else play_random_id turn board randomGen
